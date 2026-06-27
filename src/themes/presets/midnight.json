@@ -1,0 +1,22 @@
+{
+  "name": "Midnight Cuts",
+  "logoUrl": "",
+  "theme": {
+    "primary": "#f5f5f4",
+    "secondary": "#a8a29e",
+    "accent": "#f59e0b",
+    "surface": "#1c1917",
+    "background": "#0c0a09",
+    "foreground": "#fafaf9",
+    "muted": "#78716c",
+    "border": "#292524",
+    "font": "'Inter', ui-sans-serif, system-ui, sans-serif",
+    "radius": "0.75rem"
+  },
+  "policies": [
+    "El abono es del 100% del servicio al momento de agendar.",
+    "Cancelaciones con menos de 12 horas de anticipación no tienen devolución.",
+    "Tiempo máximo de espera: 15 minutos. Pasado ese tiempo, la hora se cancela sin devolución.",
+    "Edad mínima para reservar: 17 años."
+  ]
+}

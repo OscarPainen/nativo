@@ -1,0 +1,22 @@
+{
+  "name": "Barbería Demo",
+  "logoUrl": "",
+  "theme": {
+    "primary": "#111827",
+    "secondary": "#4b5563",
+    "accent": "#ca8a04",
+    "surface": "#ffffff",
+    "background": "#f9fafb",
+    "foreground": "#111827",
+    "muted": "#6b7280",
+    "border": "#e5e7eb",
+    "font": "'Inter', ui-sans-serif, system-ui, sans-serif",
+    "radius": "0.5rem"
+  },
+  "policies": [
+    "El abono es del 100% del servicio al momento de agendar.",
+    "Cancelaciones con menos de 12 horas de anticipación no tienen devolución.",
+    "Tiempo máximo de espera: 15 minutos. Pasado ese tiempo, la hora se cancela sin devolución.",
+    "Edad mínima para reservar: 17 años."
+  ]
+}

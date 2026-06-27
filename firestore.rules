@@ -1,0 +1,157 @@
+rules_version = '2';
+
+// ════════════════════════════════════════════════════════════════
+// Seguridad multi-tenant por rol. Principio de mínimo privilegio.
+//
+// Roles:
+//  - cliente anónimo (Firebase Anonymous Auth): su uid ES su sessionId.
+//  - admin: doc tenants/{tid}/users/{uid} con role == 'admin'.
+//  - superadmin: doc superadmins/{uid} (creado SOLO vía consola/Admin SDK).
+//
+// Invariantes críticas:
+//  - El campo `role` NUNCA se escribe desde el cliente (ni admins).
+//  - Nadie puede auto-asignarse admin ni superadmin.
+//  - Acceso no autenticado denegado salvo catálogo público (branding,
+//    servicios, slots) que no contiene PII.
+//  - Los slots solo cambian mediante transiciones validadas (no updates
+//    de campos arbitrarios).
+// ════════════════════════════════════════════════════════════════
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function uid() {
+      return request.auth.uid;
+    }
+    // exists()/get() omiten las reglas de lectura: seguro aunque /superadmins sea ilegible.
+    function isSuperadmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/superadmins/$(uid()));
+    }
+    function isAdmin(tid) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/tenants/$(tid)/users/$(uid()))
+        && get(/databases/$(database)/documents/tenants/$(tid)/users/$(uid())).data.role == 'admin';
+    }
+    // Poderes de gestión del tenant: admin del propio tenant o superadmin global.
+    function isStaff(tid) {
+      return isAdmin(tid) || isSuperadmin();
+    }
+    function changedOnly(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    // ── Superadmins: gestionados SOLO fuera de banda (consola/Admin SDK) ──
+    // Denegado a todo cliente; exists() en reglas sigue funcionando.
+    match /superadmins/{id} {
+      allow read, write: if false;
+    }
+
+    match /tenants/{tid} {
+      // ── Branding y datos de pago: lectura pública (no PII); escritura staff ──
+      allow read: if true;
+      allow write: if isStaff(tid);
+
+      // ── Catálogo público de servicios ──
+      match /services/{id} {
+        allow read: if true;
+        allow write: if isStaff(tid);
+      }
+
+      // ── Barberos ──
+      match /barbers/{id} {
+        allow read: if true;
+        allow write: if isStaff(tid);
+      }
+
+      // ── Perfiles de admin ──
+      // role NUNCA editable desde el cliente. Crear/eliminar admins solo
+      // superadmin (en la práctica vía consola). Un admin solo edita campos
+      // propios que NO sean role.
+      match /users/{userId} {
+        allow read: if isStaff(tid) || (isSignedIn() && uid() == userId);
+        allow update: if isSuperadmin()
+          || (isSignedIn() && uid() == userId
+              && request.resource.data.role == resource.data.role);
+        allow create, delete: if isSuperadmin();
+      }
+
+      // ── Clientes anónimos recurrentes: cada quien solo su propio doc ──
+      match /clients/{clientId} {
+        allow read: if isStaff(tid);
+        allow create, update: if isSignedIn() && clientId == uid();
+        allow delete: if isStaff(tid);
+      }
+
+      // ── Slots: lectura pública (disponibilidad); cambios validados ──
+      match /slots/{id} {
+        allow read: if true;
+        allow create, delete: if isStaff(tid);
+        allow update: if isStaff(tid)
+          // Cliente toma la hora: free (o lock expirado) -> locked a su nombre, máx 20 min.
+          || (
+            isSignedIn()
+            && changedOnly(['status', 'lockedBy', 'lockedAt', 'lockedUntil'])
+            && (
+              resource.data.status == 'free'
+              || (resource.data.status == 'locked' && resource.data.lockedUntil < request.time)
+            )
+            && request.resource.data.status == 'locked'
+            && request.resource.data.lockedBy == uid()
+            && request.resource.data.lockedUntil <= request.time + duration.value(20, 'm')
+          )
+          // Cliente libera su propio lock: locked(propio) -> free.
+          || (
+            isSignedIn()
+            && changedOnly(['status', 'lockedBy', 'lockedAt', 'lockedUntil'])
+            && resource.data.status == 'locked'
+            && resource.data.lockedBy == uid()
+            && request.resource.data.status == 'free'
+            && request.resource.data.lockedBy == null
+          )
+          // Cliente confirma: locked(propio) -> pending (solo cambia status).
+          || (
+            isSignedIn()
+            && changedOnly(['status'])
+            && resource.data.status == 'locked'
+            && resource.data.lockedBy == uid()
+            && request.resource.data.status == 'pending'
+          )
+          // Cualquier autenticado libera un lock EXPIRADO: locked(expirado) -> free.
+          || (
+            isSignedIn()
+            && changedOnly(['status', 'lockedBy', 'lockedAt', 'lockedUntil'])
+            && resource.data.status == 'locked'
+            && resource.data.lockedUntil < request.time
+            && request.resource.data.status == 'free'
+          );
+      }
+
+      // ── Reservas: PII visible solo para el dueño (sessionId) o staff ──
+      match /bookings/{id} {
+        allow read: if isStaff(tid) || (isSignedIn() && resource.data.sessionId == uid());
+        // Cliente: a nombre propio, pending_approval y condiciones aceptadas.
+        // Staff: reserva manual (cualquier estado).
+        allow create: if isStaff(tid) || (
+          isSignedIn()
+          && request.resource.data.sessionId == uid()
+          && request.resource.data.status == 'pending_approval'
+          && request.resource.data.acceptedPolicies == true
+        );
+        // Aprobar / rechazar / cancelar: solo staff.
+        allow update, delete: if isStaff(tid);
+      }
+
+      // ── Comprobantes (data-URI): los sube el dueño; los lee dueño o staff ──
+      match /comprobantes/{id} {
+        allow read: if isStaff(tid) || (isSignedIn() && resource.data.sessionId == uid());
+        allow create: if isSignedIn() && request.resource.data.sessionId == uid();
+        allow update, delete: if isStaff(tid);
+      }
+    }
+
+    // Todo lo no declarado queda denegado por defecto.
+  }
+}
