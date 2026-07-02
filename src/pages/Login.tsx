@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { FirebaseError } from 'firebase/app';
 import { useAuth } from '@/contexts/AuthContext';
 import Button from '@/components/ui/Button';
@@ -25,13 +25,19 @@ function authErrorMessage(err: unknown): string {
 }
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, clearSessionExpired } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const expired = Boolean((location.state as { expired?: boolean } | null)?.expired);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (expired) clearSessionExpired();
+  }, [expired, clearSessionExpired]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -52,6 +58,12 @@ export default function Login() {
       <Card>
         <h1 className="text-2xl font-semibold">Acceso administradores</h1>
         <p className="mt-1 text-sm text-muted">Ingresa con tu cuenta de administrador.</p>
+
+        {expired && (
+          <p className="mt-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Tu sesión ha caducado. Por favor, inicia sesión nuevamente.
+          </p>
+        )}
 
         <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-3">
           <Input

@@ -4,6 +4,7 @@ import {
   cancelBooking,
   fetchAdminBookings,
   rejectBooking,
+  removeBooking,
   type BookingView,
 } from '@/services/bookings.service';
 
@@ -50,5 +51,13 @@ export function useAdminBookings() {
     [load],
   );
 
-  return { bookings, loading, error, reload: load, approve, reject, cancel };
+  const remove = useCallback(
+    async (id: string) => {
+      await removeBooking(id);
+      await load();
+    },
+    [load],
+  );
+
+  return { bookings, loading, error, reload: load, approve, reject, cancel, remove };
 }

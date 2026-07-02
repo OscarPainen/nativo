@@ -7,7 +7,14 @@ import { useSlots } from '@/hooks/useSlots';
 import { useCountdown } from '@/hooks/useCountdown';
 import { ensureSession } from '@/services/session.service';
 import { upsertClient } from '@/services/clients.service';
-import { lockSlot, releaseLock, SlotNotAvailableError } from '@/services/slots.service';
+import {
+  getRequiredSlots,
+  lockSlotsForBooking,
+  meetsLeadTime,
+  releaseLocks,
+  NotEnoughSpaceError,
+  SlotNotAvailableError,
+} from '@/services/slots.service';
 import { confirmBooking, LockExpiredError } from '@/services/bookings.service';
 import {
   loadClientProfile,
@@ -15,6 +22,7 @@ import {
   type ClientProfile,
 } from '@/utils/clientProfile';
 import { compressImageToDataUrl } from '@/utils/image';
+import { writeErrorMessage } from '@/utils/errors';
 import { formatCLP, formatDateLabel } from '@/utils/format';
 import Calendar from '@/components/booking/Calendar';
 import ServiceCard from '@/components/booking/ServiceCard';
@@ -53,7 +61,7 @@ export default function Booking() {
   const navigate = useNavigate();
   const { tenant } = useTheme();
   const { services, loading: loadingServices } = useServices();
-  const { byDate, dates, loading: loadingSlots, reload } = useSlots();
+  const { byDate, loading: loadingSlots, reload } = useSlots();
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const stored = loadClientProfile();
@@ -63,10 +71,12 @@ export default function Booking() {
   const [service, setService] = useState<Service | null>(null);
   const [date, setDate] = useState<string | null>(null);
   const [slot, setSlot] = useState<Slot | null>(null);
+  const [slotIds, setSlotIds] = useState<string[]>([]);
   const [accepted, setAccepted] = useState(false);
   const [lockedUntil, setLockedUntil] = useState<Timestamp | null>(null);
 
   const [comprobante, setComprobante] = useState<string | null>(null);
+  const [fileKey, setFileKey] = useState(0);
   const [processingImg, setProcessingImg] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,20 +96,51 @@ export default function Booking() {
       });
   }, []);
 
+  const intervalMin = tenant?.schedule?.slotIntervalMin ?? 30;
   const daySlots = useMemo(() => (date ? byDate[date] ?? [] : []), [date, byDate]);
+
+  /** Días con al menos una hora vigente (respeta la anticipación de 3 h para hoy). */
+  const bookableDates = useMemo(
+    () =>
+      Object.keys(byDate)
+        .filter((d) => (byDate[d] ?? []).some((s) => meetsLeadTime(d, s.time)))
+        .sort(),
+    [byDate],
+  );
+
+  /**
+   * Solo horas de inicio con espacio suficiente para el servicio elegido y que
+   * respeten la anticipación mínima (3 h el mismo día, hora oficial de Chile).
+   */
+  const validStarts = useMemo(() => {
+    if (!service) return [];
+    return daySlots.filter(
+      (s) =>
+        meetsLeadTime(s.date, s.time) &&
+        getRequiredSlots(
+          daySlots,
+          s.id,
+          service.durationMin,
+          intervalMin,
+          service.lastBookableStart,
+        ) !== null,
+    );
+  }, [daySlots, service, intervalMin]);
+
   const paymentLink = service?.paymentLink || tenant?.paymentInfo?.paymentLink || '';
   const canContinue = Boolean(service && slot && accepted && !busy);
 
   function resetSelection() {
     setSlot(null);
+    setSlotIds([]);
     setLockedUntil(null);
     setComprobante(null);
   }
 
   async function backToSelect(message?: string) {
-    if (sessionId && slot) {
+    if (sessionId && slotIds.length) {
       try {
-        await releaseLock(slot.id, sessionId);
+        await releaseLocks(slotIds, sessionId);
       } catch {
         /* noop */
       }
@@ -138,17 +179,24 @@ export default function Booking() {
     setBusy(true);
     setError(null);
     try {
-      const until = await lockSlot(slot.id, sessionId);
+      const { slotIds: ids, lockedUntil: until } = await lockSlotsForBooking({
+        startSlotId: slot.id,
+        durationMin: service.durationMin,
+        intervalMin,
+        lastBookableStart: service.lastBookableStart,
+        sessionId,
+      });
+      setSlotIds(ids);
       setLockedUntil(until);
       setComprobante(null);
       setStep('payment');
     } catch (e) {
-      if (e instanceof SlotNotAvailableError) {
+      if (e instanceof NotEnoughSpaceError || e instanceof SlotNotAvailableError) {
         setError(e.message);
         setSlot(null);
         await reload();
       } else {
-        setError('No se pudo tomar la hora. Intenta de nuevo.');
+        setError(writeErrorMessage(e));
       }
     } finally {
       setBusy(false);
@@ -171,13 +219,13 @@ export default function Booking() {
   }
 
   async function confirm() {
-    if (!sessionId || !service || !slot || !profile || !comprobante) return;
+    if (!sessionId || !service || !slot || !profile || !comprobante || !slotIds.length) return;
     setBusy(true);
     setError(null);
     try {
       await confirmBooking({
         sessionId,
-        slotId: slot.id,
+        slotIds,
         serviceId: service.id,
         clientName: profile.name,
         clientPhone: profile.phone,
@@ -190,7 +238,7 @@ export default function Booking() {
       if (e instanceof LockExpiredError || e instanceof SlotNotAvailableError) {
         await backToSelect(e.message);
       } else {
-        setError('No se pudo confirmar la reserva. Intenta de nuevo.');
+        setError(writeErrorMessage(e));
       }
     } finally {
       setBusy(false);
@@ -273,14 +321,18 @@ export default function Booking() {
             <p className="text-sm text-muted">Cargando disponibilidad…</p>
           ) : (
             <div className="flex justify-center">
-              <Calendar dates={dates} selected={date} onSelect={selectDate} />
+              <Calendar dates={bookableDates} selected={date} onSelect={selectDate} />
             </div>
           )}
         </Card>
 
         <Card>
           <SectionTitle n={3}>Elige la hora</SectionTitle>
-          <SlotPicker slots={daySlots} selectedId={slot?.id ?? null} onSelect={setSlot} />
+          {!service ? (
+            <p className="text-sm text-muted">Primero elige un servicio.</p>
+          ) : (
+            <SlotPicker slots={validStarts} selectedId={slot?.id ?? null} onSelect={setSlot} />
+          )}
         </Card>
 
         <Card>
@@ -362,22 +414,36 @@ export default function Booking() {
             Una vez pagado, vuelve aquí y sube tu comprobante.
           </p>
 
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-muted">Comprobante (imagen)</span>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleFile}
-              className="text-sm file:mr-3 file:rounded file:border-0 file:bg-primary file:px-3 file:py-2 file:text-surface"
-            />
-          </label>
+          {!comprobante && (
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-muted">Comprobante (imagen)</span>
+              <input
+                key={fileKey}
+                type="file"
+                accept="image/*"
+                onChange={handleFile}
+                className="text-sm file:mr-3 file:rounded file:border-0 file:bg-primary file:px-3 file:py-2 file:text-surface"
+              />
+            </label>
+          )}
           {processingImg && <p className="text-sm text-muted">Procesando imagen…</p>}
           {comprobante && (
-            <img
-              src={comprobante}
-              alt="Comprobante"
-              className="max-h-48 w-auto rounded border border-border object-contain"
-            />
+            <div className="flex flex-col items-start gap-2">
+              <img
+                src={comprobante}
+                alt="Comprobante"
+                className="max-h-48 w-auto rounded border border-border object-contain"
+              />
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setComprobante(null);
+                  setFileKey((k) => k + 1);
+                }}
+              >
+                Quitar imagen
+              </Button>
+            </div>
           )}
 
           <ErrorMsg>{error}</ErrorMsg>

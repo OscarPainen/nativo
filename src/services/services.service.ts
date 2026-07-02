@@ -44,7 +44,9 @@ export async function hasFutureBookings(serviceId: string): Promise<boolean> {
   );
   const today = new Date().toISOString().slice(0, 10);
   for (const b of active) {
-    const slotSnap = await getDoc(slotDoc(b.data().slotId));
+    const firstSlotId = (b.data().slotIds as string[] | undefined)?.[0];
+    if (!firstSlotId) continue;
+    const slotSnap = await getDoc(slotDoc(firstSlotId));
     if (slotSnap.exists() && (slotSnap.data().date as string) >= today) return true;
   }
   return false;

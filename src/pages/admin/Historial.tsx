@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAdminBookings } from '@/hooks/useAdminBookings';
 import { exportBookingsCSV, type BookingView } from '@/services/bookings.service';
+import { isPastSlot } from '@/services/slots.service';
 import Drawer from '@/components/ui/Drawer';
 import Button from '@/components/ui/Button';
+import Pagination, { PAGE_SIZE } from '@/components/admin/Pagination';
 import { formatCLP, formatDateLabel } from '@/utils/format';
 
 const field = 'rounded border border-border bg-surface px-2 py-1.5 text-sm';
@@ -16,9 +18,14 @@ export default function Historial() {
   const [serviceName, setServiceName] = useState('all');
   const [search, setSearch] = useState('');
   const [client, setClient] = useState<{ name: string; phone: string } | null>(null);
+  const [page, setPage] = useState(0);
 
+  // Solo cortes YA realizados (fecha/hora pasada según hora oficial de Chile).
   const confirmed = useMemo(
-    () => bookings.filter((v) => v.booking.status === 'confirmed' && v.slot),
+    () =>
+      bookings.filter(
+        (v) => v.booking.status === 'confirmed' && v.slot && isPastSlot(v.slot.date, v.slot.time),
+      ),
     [bookings],
   );
 
@@ -43,6 +50,11 @@ export default function Historial() {
         (b.slot!.date + b.slot!.time).localeCompare(a.slot!.date + a.slot!.time),
       );
   }, [confirmed, month, serviceName, search]);
+
+  useEffect(() => setPage(0), [month, serviceName, search]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const current = Math.min(page, pageCount - 1);
+  const pageRows = filtered.slice(current * PAGE_SIZE, current * PAGE_SIZE + PAGE_SIZE);
 
   const clientHistory = useMemo(() => {
     if (!client) return [];
@@ -91,8 +103,9 @@ export default function Historial() {
       {loading ? (
         <p className="text-sm text-muted">Cargando…</p>
       ) : filtered.length === 0 ? (
-        <p className="text-sm text-muted">Sin cortes confirmados.</p>
+        <p className="text-sm text-muted">Sin cortes realizados.</p>
       ) : (
+        <>
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full border-collapse text-sm">
             <thead className="bg-background">
@@ -107,7 +120,7 @@ export default function Historial() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((v) => (
+              {pageRows.map((v) => (
                 <tr key={v.booking.id} className="border-t border-border hover:bg-background">
                   <td className={td}>{formatDateLabel(v.slot!.date)}</td>
                   <td className={td}>{v.slot!.time}</td>
@@ -125,6 +138,16 @@ export default function Historial() {
             </tbody>
           </table>
         </div>
+        <div className="mt-3">
+          <Pagination
+            page={current}
+            pageCount={pageCount}
+            total={filtered.length}
+            onPage={setPage}
+            label="cortes"
+          />
+        </div>
+        </>
       )}
 
       <Drawer open={!!client} onClose={() => setClient(null)} title="Detalle de cliente">

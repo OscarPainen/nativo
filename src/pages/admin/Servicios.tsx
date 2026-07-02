@@ -21,9 +21,17 @@ interface Form {
   price: number;
   paymentLink: string;
   description: string;
+  lastBookableStart: string;
 }
 
-const EMPTY: Form = { name: '', durationMin: 60, price: 0, paymentLink: '', description: '' };
+const EMPTY: Form = {
+  name: '',
+  durationMin: 60,
+  price: 0,
+  paymentLink: '',
+  description: '',
+  lastBookableStart: '',
+};
 
 function validate(f: Form): string | null {
   if (f.name.trim().length < 2) return 'El nombre es obligatorio.';
@@ -58,6 +66,7 @@ export default function Servicios() {
       price: s.price,
       paymentLink: s.paymentLink ?? '',
       description: s.description ?? '',
+      lastBookableStart: s.lastBookableStart ?? '',
     });
     setError(null);
     setEditing(s);
@@ -82,6 +91,7 @@ export default function Servicios() {
         price: form.price,
         paymentLink: form.paymentLink.trim(),
         description: form.description.trim(),
+        lastBookableStart: form.lastBookableStart.trim() || null,
       };
       if (editing) {
         await updateService(editing.id, data);
@@ -181,6 +191,15 @@ export default function Servicios() {
           <label className="text-sm text-muted">
             Link de pago MP
             <Input className="mt-1" value={form.paymentLink} onChange={(e) => setForm({ ...form, paymentLink: e.target.value })} placeholder="https://mpago.la/..." />
+          </label>
+          <label className="text-sm text-muted">
+            Última hora de inicio (opcional)
+            <input
+              type="time"
+              className={field}
+              value={form.lastBookableStart}
+              onChange={(e) => setForm({ ...form, lastBookableStart: e.target.value })}
+            />
           </label>
           <label className="text-sm text-muted">
             Descripción

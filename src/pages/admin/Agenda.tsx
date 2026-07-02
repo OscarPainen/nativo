@@ -64,7 +64,7 @@ export default function Agenda() {
     const map: Record<string, string> = {};
     for (const v of bookings) {
       if (v.booking.status === 'confirmed' || v.booking.status === 'pending_approval') {
-        map[v.booking.slotId] = v.booking.clientName;
+        for (const id of v.booking.slotIds ?? []) map[id] = v.booking.clientName;
       }
     }
     return map;

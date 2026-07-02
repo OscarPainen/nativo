@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import { useServices } from '@/hooks/useServices';
-import { fetchSlotsByDate } from '@/services/slots.service';
+import { useTheme } from '@/contexts/ThemeContext';
+import { fetchSlotsByDate, getRequiredSlots } from '@/services/slots.service';
 import { createManualBooking } from '@/services/bookings.service';
 import { formatCLP } from '@/utils/format';
 import type { Slot } from '@/types';
@@ -18,6 +19,8 @@ const field = 'w-full rounded border border-border bg-surface px-3 py-2 text-sm 
 
 export default function ManualBookingModal({ open, onClose, onCreated }: Props) {
   const { services } = useServices(true);
+  const { tenant } = useTheme();
+  const intervalMin = tenant?.schedule?.slotIntervalMin ?? 30;
   const [serviceId, setServiceId] = useState('');
   const [date, setDate] = useState('');
   const [freeSlots, setFreeSlots] = useState<Slot[]>([]);
@@ -26,6 +29,8 @@ export default function ManualBookingModal({ open, onClose, onCreated }: Props) 
   const [phone, setPhone] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const service = services.find((s) => s.id === serviceId) ?? null;
 
   useEffect(() => {
     if (!date) {
@@ -36,17 +41,29 @@ export default function ManualBookingModal({ open, onClose, onCreated }: Props) 
     fetchSlotsByDate(date).then((s) => setFreeSlots(s.filter((x) => x.status === 'free')));
   }, [date]);
 
+  /** Horas con cupos consecutivos suficientes para el servicio. */
+  const validStarts = useMemo(() => {
+    if (!service) return [];
+    return freeSlots.filter(
+      (s) =>
+        getRequiredSlots(freeSlots, s.id, service.durationMin, intervalMin, service.lastBookableStart) !==
+        null,
+    );
+  }, [freeSlots, service, intervalMin]);
+
   async function submit() {
     setError(null);
-    if (!serviceId || !slotId || name.trim().length < 3 || phone.trim().length < 6) {
+    if (!service || !slotId || name.trim().length < 3 || phone.trim().length < 6) {
       setError('Completa servicio, fecha, hora, nombre y teléfono.');
       return;
     }
     setBusy(true);
     try {
       await createManualBooking({
-        slotId,
+        startSlotId: slotId,
         serviceId,
+        durationMin: service.durationMin,
+        intervalMin,
         clientName: name.trim(),
         clientPhone: phone.trim(),
       });
@@ -90,17 +107,19 @@ export default function ManualBookingModal({ open, onClose, onCreated }: Props) 
             className={`mt-1 ${field}`}
             value={slotId}
             onChange={(e) => setSlotId(e.target.value)}
-            disabled={!date}
+            disabled={!date || !service}
           >
-            <option value="">{date ? 'Selecciona…' : 'Elige una fecha primero'}</option>
-            {freeSlots.map((s) => (
+            <option value="">
+              {!service ? 'Elige un servicio primero' : date ? 'Selecciona…' : 'Elige una fecha primero'}
+            </option>
+            {validStarts.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.time}
               </option>
             ))}
           </select>
-          {date && freeSlots.length === 0 && (
-            <span className="mt-1 block text-xs text-muted">No hay cupos libres ese día.</span>
+          {date && service && validStarts.length === 0 && (
+            <span className="mt-1 block text-xs text-muted">No hay cupos suficientes ese día.</span>
           )}
         </label>
 

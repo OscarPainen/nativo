@@ -3,6 +3,23 @@ import type { Tenant } from '@/types';
 import { applyTheme } from '@/config/theme';
 import { fetchTenant } from '@/services/tenant.service';
 
+/**
+ * Sincroniza título y favicon de la pestaña con la marca del tenant.
+ * Nota: los navegadores cachean el favicon de forma agresiva; un cambio de
+ * logo puede no verse hasta un refresco forzado o reapertura de la pestaña.
+ * Es comportamiento estándar del navegador, no un error del sistema.
+ */
+function applyBranding(tenant: Tenant) {
+  document.title = `${tenant.name} — Reservas`;
+  let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
+  if (!link) {
+    link = document.createElement('link');
+    link.rel = 'icon';
+    document.head.appendChild(link);
+  }
+  link.href = tenant.logoUrl || '/favicon-default.svg';
+}
+
 interface ThemeContextValue {
   tenant: Tenant | null;
   loading: boolean;
@@ -21,6 +38,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     const t = await fetchTenant();
     applyTheme(t.theme);
+    applyBranding(t);
     setTenant(t);
     setLoading(false);
   }

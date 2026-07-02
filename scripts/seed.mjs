@@ -19,14 +19,17 @@ import { getFirestore } from 'firebase-admin/firestore';
 // CONFIGURACIÓN (editar a futuro)
 // ─────────────────────────────────────────────────────────────
 const TENANT_ID = process.env.VITE_TENANT_ID || 'barberia-demo';
-const DIAS_ADELANTE = 30;
-// Sesiones de 60 min. Semana 10–19 (última hora a tomar: 19; pausa 13–14).
-// Sábado 9–13 (última hora a tomar: 12). Domingo cerrado.
-const HORARIO = {
-  semana: ['10:00', '11:00', '12:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'],
-  sabado: ['09:00', '10:00', '11:00', '12:00'],
+// Horario por bloques (el almuerzo es el hueco entre bloques).
+// Mañana 11:00–13:30 y tarde 14:30–20:00 → quedan deshabilitadas las 13:30 y 14:00.
+// Cierre 20:00: un corte de 60 min puede iniciarse a las 19:00 (último inicio).
+const SCHEDULE = {
+  blocks: [
+    { id: 'morning', start: '11:00', end: '13:30' },
+    { id: 'afternoon', start: '14:30', end: '20:00' },
+  ],
+  slotIntervalMin: 30,
+  daysOpen: [1, 2, 3, 4, 5, 6], // 0=domingo … 6=sábado
 };
-const DIAS_DESCANSO = [0]; // 0=domingo
 
 // ─────────────────────────────────────────────────────────────
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -66,6 +69,7 @@ const tenant = {
     mercadoPagoUser: 'Barbería Demo',
     paymentLink: '',
   },
+  schedule: SCHEDULE,
 };
 
 const services = [
@@ -76,6 +80,7 @@ const services = [
     price: 19000,
     description: 'Corte de cabello a tijera y máquina.',
     paymentLink: '',
+    lastBookableStart: null,
   },
   {
     id: 'corte-barba',
@@ -84,14 +89,16 @@ const services = [
     price: 24000,
     description: 'Corte completo más perfilado de barba.',
     paymentLink: '',
+    lastBookableStart: '18:00',
   },
   {
     id: 'corte-barba-vapor',
     name: 'Corte y Barba Vapor',
-    durationMin: 60,
+    durationMin: 90,
     price: 28000,
     description: 'Corte, barba y tratamiento con toalla de vapor.',
     paymentLink: '',
+    lastBookableStart: '18:00',
   },
 ];
 
@@ -124,33 +131,58 @@ function isoDate(d) {
   return new Date(d.getTime() - off * 60_000).toISOString().slice(0, 10);
 }
 
-/** Reservas dinámicas: próximos DIAS_ADELANTE días, lun-sáb, según HORARIO. */
+function toMin(t) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+function toTime(min) {
+  return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+}
+
+/** Primer día abierto desde `start` (según SCHEDULE.daysOpen). */
+function firstOpenFrom(start) {
+  const d = new Date(start);
+  for (let k = 0; k < 14; k++) {
+    if (SCHEDULE.daysOpen.includes(d.getDay())) return d;
+    d.setDate(d.getDate() + 1);
+  }
+  return d;
+}
+
+/**
+ * Slots dinámicos: desde el primer día abierto (mañana en adelante) hasta el
+ * mismo día del mes siguiente, iterando SCHEDULE.blocks. Ventana de un mes
+ * calendario anclada en la primera fecha disponible.
+ */
 function generateSlots() {
   const activeBarbers = barbers.filter((b) => b.active);
   const today = new Date();
+  const start = new Date(today);
+  start.setDate(today.getDate() + 1); // desde mañana
+  const firstOpen = firstOpenFrom(start);
+  const end = new Date(firstOpen.getFullYear(), firstOpen.getMonth() + 1, firstOpen.getDate());
   const slots = [];
 
-  for (let i = 1; i <= DIAS_ADELANTE; i++) {
-    const day = new Date(today);
-    day.setDate(today.getDate() + i);
-    const wd = day.getDay(); // 0=domingo .. 6=sábado
-    if (DIAS_DESCANSO.includes(wd)) continue;
+  for (const day = new Date(firstOpen); day <= end; day.setDate(day.getDate() + 1)) {
+    const wd = day.getDay(); // 0=domingo … 6=sábado
+    if (!SCHEDULE.daysOpen.includes(wd)) continue;
 
-    const horas = wd === 6 ? HORARIO.sabado : HORARIO.semana;
     const date = isoDate(day);
-
-    for (const time of horas) {
-      for (const barber of activeBarbers) {
-        slots.push({
-          id: `${date}_${time.replace(':', '')}_${barber.id}`,
-          date,
-          time,
-          status: 'free',
-          barberId: barber.id,
-          lockedBy: null,
-          lockedAt: null,
-          lockedUntil: null,
-        });
+    for (const block of SCHEDULE.blocks) {
+      for (let t = toMin(block.start); t < toMin(block.end); t += SCHEDULE.slotIntervalMin) {
+        const time = toTime(t);
+        for (const barber of activeBarbers) {
+          slots.push({
+            id: `${date}_${time.replace(':', '')}_${barber.id}`,
+            date,
+            time,
+            status: 'free',
+            barberId: barber.id,
+            lockedBy: null,
+            lockedAt: null,
+            lockedUntil: null,
+          });
+        }
       }
     }
   }
@@ -202,7 +234,7 @@ async function run() {
   );
 
   const slots = generateSlots();
-  await step(`insertar ${slots.length} slots (próximos ${DIAS_ADELANTE} días)`, () =>
+  await step(`insertar ${slots.length} slots (ventana de un mes desde la primera fecha)`, () =>
     batchSet(tenantRef.collection('slots'), slots),
   );
 

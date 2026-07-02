@@ -12,7 +12,7 @@ export default function ProtectedRoute({
   role,
   redirectTo = '/login',
 }: ProtectedRouteProps) {
-  const { firebaseUser, profile, loading } = useAuth();
+  const { firebaseUser, profile, loading, sessionExpired } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -24,7 +24,13 @@ export default function ProtectedRoute({
   }
 
   if (!firebaseUser) {
-    return <Navigate to={redirectTo} replace state={{ from: location }} />;
+    return (
+      <Navigate
+        to={redirectTo}
+        replace
+        state={{ from: location, expired: sessionExpired }}
+      />
+    );
   }
 
   if (role && profile?.role !== role) {

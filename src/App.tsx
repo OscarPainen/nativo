@@ -5,6 +5,7 @@ import { ToastProvider } from '@/contexts/ToastContext';
 import ProtectedRoute from '@/routes/ProtectedRoute';
 import Layout from '@/components/layout/Layout';
 import AdminLayout from '@/components/layout/AdminLayout';
+import ConnectionStatus from '@/components/layout/ConnectionStatus';
 import Home from '@/pages/Home';
 import Login from '@/pages/Login';
 import Booking from '@/pages/Booking';
@@ -15,7 +16,7 @@ import Agenda from '@/pages/admin/Agenda';
 import Servicios from '@/pages/admin/Servicios';
 import Estadisticas from '@/pages/admin/Estadisticas';
 import Settings from '@/pages/admin/Settings';
-import Placeholder from '@/pages/Placeholder';
+import NotFound from '@/pages/NotFound';
 
 function ThemedShell({ children }: { children: React.ReactNode }) {
   const { loading } = useTheme();
@@ -34,6 +35,7 @@ export default function App() {
     <ThemeProvider>
       <AuthProvider>
         <ToastProvider>
+          <ConnectionStatus />
           <ThemedShell>
             <BrowserRouter>
               <Routes>
@@ -56,7 +58,7 @@ export default function App() {
                   </Route>
                 </Route>
 
-                <Route path="*" element={<Placeholder title="404" phase="—" />} />
+                <Route path="*" element={<NotFound />} />
               </Routes>
             </BrowserRouter>
           </ThemedShell>

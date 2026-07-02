@@ -32,6 +32,23 @@ export interface PaymentInfo {
   paymentLink: string;
 }
 
+/** Bloque horario continuo (el almuerzo es el hueco entre dos bloques). */
+export interface ScheduleBlock {
+  id: string;
+  /** "HH:mm" inicio del bloque. */
+  start: string;
+  /** "HH:mm" fin del bloque (exclusivo). */
+  end: string;
+}
+
+export interface Schedule {
+  blocks: ScheduleBlock[];
+  /** Tamaño de cada slot en minutos (la grilla base). */
+  slotIntervalMin: number;
+  /** Días abiertos: 0=domingo … 6=sábado. */
+  daysOpen: number[];
+}
+
 export interface Tenant {
   id: string;
   name: string;
@@ -44,6 +61,12 @@ export interface Tenant {
   paymentNote?: string;
   /** Horario de atención informativo (no afecta slots). */
   scheduleNote?: string;
+  /** Configuración de horarios para generar slots (bloques + almuerzo + días). */
+  schedule?: Schedule;
+  /** URL del webhook de Apps Script de esta barbería (Google Calendar). */
+  calendarWebhookUrl?: string;
+  /** ID de calendario específico a usar (opcional; si no, el principal). */
+  googleCalendarId?: string | null;
 }
 
 export interface Service {
@@ -56,6 +79,8 @@ export interface Service {
   paymentLink?: string;
   /** Inactivo = no aparece en el flujo de reserva del cliente. */
   active?: boolean;
+  /** Tope adicional de hora de inicio para este servicio (ej "18:00"). */
+  lastBookableStart?: string | null;
 }
 
 export interface Barber {
@@ -86,7 +111,8 @@ export interface Booking {
   clientPhone: string;
   /** uid anónimo del cliente (Firebase Anonymous Auth). */
   sessionId: string;
-  slotId: string;
+  /** Slots ocupados por la reserva (1+ según la duración del servicio). */
+  slotIds: string[];
   serviceId: string;
   status: BookingStatus;
   /** Si el comprobante quedó guardado en comprobantes/{bookingId}. */
@@ -97,6 +123,10 @@ export interface Booking {
   lockedUntil: Timestamp | null;
   /** Motivo de rechazo (si el admin rechaza). */
   rejectionReason?: string;
+  /** ID del evento en Google Calendar (si se sincronizó). */
+  calendarEventId?: string | null;
+  /** True si la última sincronización con Calendar falló. */
+  calendarSyncFailed?: boolean;
 }
 
 /** Cliente anónimo recurrente (para que el admin vea historial por teléfono). */

@@ -1,14 +1,26 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { updateTenant } from '@/services/tenant.service';
+import { pingWebhook } from '@/services/calendar.service';
 import { applyTheme } from '@/config/theme';
 import { compressImageToDataUrl } from '@/utils/image';
 import { isValidMpLink } from '@/utils/validation';
 import { useToast } from '@/contexts/ToastContext';
+import { DEFAULT_SCHEDULE } from '@/services/tenant.service';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
-import type { TenantTheme } from '@/types';
+import type { Schedule, TenantTheme } from '@/types';
+
+const DAYS = [
+  { n: 1, label: 'Lun' },
+  { n: 2, label: 'Mar' },
+  { n: 3, label: 'Mié' },
+  { n: 4, label: 'Jue' },
+  { n: 5, label: 'Vie' },
+  { n: 6, label: 'Sáb' },
+  { n: 0, label: 'Dom' },
+];
 
 const fieldCls = 'mt-1 w-full rounded border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-accent';
 
@@ -25,6 +37,11 @@ export default function Settings() {
   const [paymentNote, setPaymentNote] = useState('');
   const [scheduleNote, setScheduleNote] = useState('');
   const [policies, setPolicies] = useState<string[]>([]);
+  const [schedule, setSchedule] = useState<Schedule>(DEFAULT_SCHEDULE);
+  const [calendarUrl, setCalendarUrl] = useState('');
+  const [calendarId, setCalendarId] = useState('');
+  const [pingMsg, setPingMsg] = useState<string | null>(null);
+  const [pinging, setPinging] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -38,6 +55,9 @@ export default function Settings() {
     setPaymentNote(tenant.paymentNote ?? '');
     setScheduleNote(tenant.scheduleNote ?? '');
     setPolicies(tenant.policies ?? []);
+    setSchedule(tenant.schedule ?? DEFAULT_SCHEDULE);
+    setCalendarUrl(tenant.calendarWebhookUrl ?? '');
+    setCalendarId(tenant.googleCalendarId ?? '');
   }, [tenant]);
 
   /** Preview en vivo de colores. */
@@ -73,6 +93,9 @@ export default function Settings() {
         paymentNote: paymentNote.trim(),
         scheduleNote: scheduleNote.trim(),
         policies: policies.map((p) => p.trim()).filter(Boolean),
+        schedule,
+        calendarWebhookUrl: calendarUrl.trim(),
+        googleCalendarId: calendarId.trim() || null,
       });
       await reload();
       show('Cambios guardados.');
@@ -160,6 +183,107 @@ export default function Settings() {
 
       <Card>
         <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-medium">Horarios</h2>
+          <Button
+            variant="ghost"
+            onClick={() =>
+              setSchedule((s) => ({
+                ...s,
+                blocks: [...s.blocks, { id: `b${Date.now()}`, start: '10:00', end: '14:00' }],
+              }))
+            }
+          >
+            + Bloque
+          </Button>
+        </div>
+        <p className="mb-3 text-sm text-muted">
+          El almuerzo es el hueco entre el fin de un bloque y el inicio del siguiente.
+        </p>
+        <div className="flex flex-col gap-2">
+          {schedule.blocks.map((b, i) => (
+            <div key={b.id} className="flex items-center gap-2">
+              <input
+                type="time"
+                className={fieldCls}
+                value={b.start}
+                onChange={(e) =>
+                  setSchedule((s) => ({
+                    ...s,
+                    blocks: s.blocks.map((x, j) => (j === i ? { ...x, start: e.target.value } : x)),
+                  }))
+                }
+              />
+              <span className="text-muted">a</span>
+              <input
+                type="time"
+                className={fieldCls}
+                value={b.end}
+                onChange={(e) =>
+                  setSchedule((s) => ({
+                    ...s,
+                    blocks: s.blocks.map((x, j) => (j === i ? { ...x, end: e.target.value } : x)),
+                  }))
+                }
+              />
+              <Button
+                variant="ghost"
+                onClick={() =>
+                  setSchedule((s) => ({ ...s, blocks: s.blocks.filter((_, j) => j !== i) }))
+                }
+              >
+                ✕
+              </Button>
+            </div>
+          ))}
+        </div>
+        <label className="mt-3 block text-sm text-muted">
+          Intervalo de la grilla (min)
+          <input
+            type="number"
+            min={15}
+            step={15}
+            className={`${fieldCls} w-28`}
+            value={schedule.slotIntervalMin}
+            onChange={(e) =>
+              setSchedule((s) => ({ ...s, slotIntervalMin: Number(e.target.value) }))
+            }
+          />
+        </label>
+        <div className="mt-3">
+          <p className="text-sm text-muted">Días abiertos</p>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {DAYS.map((d) => {
+              const on = schedule.daysOpen.includes(d.n);
+              return (
+                <button
+                  key={d.n}
+                  type="button"
+                  onClick={() =>
+                    setSchedule((s) => ({
+                      ...s,
+                      daysOpen: on
+                        ? s.daysOpen.filter((x) => x !== d.n)
+                        : [...s.daysOpen, d.n],
+                    }))
+                  }
+                  className={`rounded-md border px-3 py-1.5 text-sm ${
+                    on ? 'border-accent bg-accent/10 text-foreground' : 'border-border text-muted'
+                  }`}
+                >
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-muted">
+          Nota: los cambios de horario aplican a los slots que generes luego (seed o Agenda);
+          no reescriben los slots ya creados.
+        </p>
+      </Card>
+
+      <Card>
+        <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-medium">Políticas</h2>
           <Button variant="ghost" onClick={() => setPolicies([...policies, ''])}>
             + Agregar
@@ -178,6 +302,49 @@ export default function Settings() {
             </div>
           ))}
           {policies.length === 0 && <p className="text-sm text-muted">Sin políticas.</p>}
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="mb-1 text-lg font-medium">Integración Google Calendar</h2>
+        <p className="mb-3 text-sm text-muted">
+          Al confirmar/cancelar/reprogramar una reserva se crea o borra el evento en tu
+          Google Calendar mediante un webhook de Apps Script. Ver instrucciones en
+          <span className="font-mono"> apps-script/apps_script_calendar.js</span>.
+        </p>
+        <label className="block text-sm text-muted">
+          URL del webhook (Apps Script)
+          <Input
+            className="mt-1"
+            value={calendarUrl}
+            onChange={(e) => setCalendarUrl(e.target.value)}
+            placeholder="https://script.google.com/macros/s/.../exec"
+          />
+        </label>
+        <label className="mt-3 block text-sm text-muted">
+          ID de calendario específico (opcional)
+          <Input
+            className="mt-1"
+            value={calendarId}
+            onChange={(e) => setCalendarId(e.target.value)}
+            placeholder="...@group.calendar.google.com"
+          />
+        </label>
+        <div className="mt-3 flex items-center gap-3">
+          <Button
+            variant="secondary"
+            disabled={pinging || !calendarUrl.trim()}
+            onClick={async () => {
+              setPinging(true);
+              setPingMsg(null);
+              const ok = await pingWebhook(calendarUrl.trim());
+              setPingMsg(ok ? 'Conectado correctamente.' : 'No se pudo conectar.');
+              setPinging(false);
+            }}
+          >
+            {pinging ? 'Probando…' : 'Probar conexión'}
+          </Button>
+          {pingMsg && <span className="text-sm text-muted">{pingMsg}</span>}
         </div>
       </Card>
 

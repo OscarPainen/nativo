@@ -11,6 +11,7 @@ interface Props {
   onApprove: (id: string) => void;
   onReject: (v: BookingView) => void;
   onCancel: (v: BookingView) => void;
+  onReschedule: (v: BookingView) => void;
   onViewComprobante: (id: string) => void;
 }
 
@@ -21,6 +22,7 @@ export default function BookingDetailModal({
   onApprove,
   onReject,
   onCancel,
+  onReschedule,
   onViewComprobante,
 }: Props) {
   return (
@@ -58,9 +60,14 @@ export default function BookingDetailModal({
               </>
             )}
             {view.booking.status === 'confirmed' && (
-              <Button variant="secondary" disabled={busy} onClick={() => onCancel(view)}>
-                Cancelar
-              </Button>
+              <>
+                <Button disabled={busy} onClick={() => onReschedule(view)}>
+                  Reprogramar
+                </Button>
+                <Button variant="secondary" disabled={busy} onClick={() => onCancel(view)}>
+                  Eliminar
+                </Button>
+              </>
             )}
           </div>
         </div>

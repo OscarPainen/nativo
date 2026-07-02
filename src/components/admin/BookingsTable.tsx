@@ -1,6 +1,6 @@
 import type { BookingView } from '@/services/bookings.service';
 import { BookingBadge, ROW_BG } from './StatusBadge';
-import { IconCheck, IconEye, IconX } from '@/components/ui/icons';
+import { IconAlert, IconCheck, IconEye, IconX } from '@/components/ui/icons';
 import { formatCLP, formatDateLabel } from '@/utils/format';
 
 interface BookingsTableProps {
@@ -10,6 +10,9 @@ interface BookingsTableProps {
   onApprove?: (id: string) => void;
   onReject?: (v: BookingView) => void;
   onCancel?: (v: BookingView) => void;
+  onReschedule?: (v: BookingView) => void;
+  onRemove?: (v: BookingView) => void;
+  onRetrySync?: (v: BookingView) => void;
   onViewComprobante?: (id: string) => void;
   onClientClick?: (v: BookingView) => void;
 }
@@ -24,6 +27,9 @@ export default function BookingsTable({
   onApprove,
   onReject,
   onCancel,
+  onReschedule,
+  onRemove,
+  onRetrySync,
   onViewComprobante,
   onClientClick,
 }: BookingsTableProps) {
@@ -91,7 +97,24 @@ export default function BookingsTable({
                   )}
                 </td>
                 <td className={td}>
-                  <div className="flex gap-1">
+                  <div className="flex items-center gap-1">
+                    {booking.calendarSyncFailed && (
+                      <span
+                        className="flex items-center text-amber-500"
+                        title="No se sincronizó con Google Calendar"
+                      >
+                        <IconAlert size={16} />
+                      </span>
+                    )}
+                    {booking.calendarSyncFailed && onRetrySync && (
+                      <button
+                        disabled={busyId === booking.id}
+                        onClick={() => onRetrySync(v)}
+                        className="rounded border border-border px-2 py-1 text-xs disabled:opacity-50"
+                      >
+                        Reintentar
+                      </button>
+                    )}
                     {booking.status === 'pending_approval' && onApprove && onReject && (
                       <>
                         <button
@@ -110,15 +133,34 @@ export default function BookingsTable({
                         </button>
                       </>
                     )}
+                    {booking.status === 'confirmed' && onReschedule && (
+                      <button
+                        disabled={busyId === booking.id}
+                        onClick={() => onReschedule(v)}
+                        className="rounded border border-border px-2 py-1 text-xs disabled:opacity-50"
+                      >
+                        Reprogramar
+                      </button>
+                    )}
                     {booking.status === 'confirmed' && onCancel && (
                       <button
                         disabled={busyId === booking.id}
                         onClick={() => onCancel(v)}
                         className="rounded border border-border px-2 py-1 text-xs disabled:opacity-50"
                       >
-                        Cancelar
+                        Eliminar
                       </button>
                     )}
+                    {(booking.status === 'cancelled' || booking.status === 'rejected') &&
+                      onRemove && (
+                        <button
+                          disabled={busyId === booking.id}
+                          onClick={() => onRemove(v)}
+                          className="rounded border border-red-300 px-2 py-1 text-xs text-red-700 disabled:opacity-50"
+                        >
+                          Eliminar
+                        </button>
+                      )}
                   </div>
                 </td>
               </tr>

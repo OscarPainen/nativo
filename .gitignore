@@ -11,6 +11,14 @@ serviceAccount.json
 *.key
 *.pem
 
+# ─── Apps Script / Google Calendar (secretos locales) ───
+.clasp.json
+.clasprc.json
+apps-script/.clasp.json
+apps-script/*.local.js
+apps-script/config.local.js
+apps-script/
+
 # ─── Dependencias y build ───
 node_modules/
 dist/

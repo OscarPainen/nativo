@@ -3,6 +3,8 @@ import { useAdminBookings } from '@/hooks/useAdminBookings';
 import { exportBookingsCSV, type BookingView } from '@/services/bookings.service';
 import { periodRange } from '@/services/stats.service';
 import { todayISO } from '@/services/slots.service';
+import { retryCalendarSync } from '@/services/calendar.service';
+import { writeErrorMessage } from '@/utils/errors';
 import type { BookingStatus } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
 import BookingsTable from '@/components/admin/BookingsTable';
@@ -10,6 +12,7 @@ import ScheduleCalendar from '@/components/admin/ScheduleCalendar';
 import ComprobanteModal from '@/components/admin/ComprobanteModal';
 import RejectModal from '@/components/admin/RejectModal';
 import BookingDetailModal from '@/components/admin/BookingDetailModal';
+import RescheduleModal from '@/components/admin/RescheduleModal';
 import ManualBookingModal from '@/components/admin/ManualBookingModal';
 import Button from '@/components/ui/Button';
 
@@ -18,7 +21,7 @@ const PAGE_SIZE = 20;
 const field = 'rounded border border-border bg-surface px-2 py-1.5 text-sm';
 
 export default function Reservas() {
-  const { bookings, loading, approve, reject, cancel, reload } = useAdminBookings();
+  const { bookings, loading, approve, reject, cancel, remove, reload } = useAdminBookings();
   const { show } = useToast();
   const [manualOpen, setManualOpen] = useState(false);
 
@@ -34,6 +37,7 @@ export default function Reservas() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [comprobanteId, setComprobanteId] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<BookingView | null>(null);
+  const [rescheduling, setRescheduling] = useState<BookingView | null>(null);
   const [detail, setDetail] = useState<BookingView | null>(null);
 
   const serviceNames = useMemo(
@@ -49,9 +53,11 @@ export default function Reservas() {
 
     return bookings
       .filter((v) => {
+        const d = v.slot?.date ?? '';
+        // Gestión = solo presente y futuro; el pasado vive en /admin/historial.
+        if (d < today) return false;
         if (status !== 'all' && v.booking.status !== status) return false;
         if (serviceName !== 'all' && v.service?.name !== serviceName) return false;
-        const d = v.slot?.date ?? '';
         if (dateFilter === 'today' && d !== today) return false;
         if (dateFilter === 'week' && !(d >= week.start && d <= week.end)) return false;
         if (dateFilter === 'month' && !(d >= month.start && d <= month.end)) return false;
@@ -80,8 +86,8 @@ export default function Reservas() {
     try {
       await fn();
       show(ok);
-    } catch {
-      show('Ocurrió un error.', 'error');
+    } catch (e) {
+      show(writeErrorMessage(e), 'error');
     }
   }
 
@@ -164,11 +170,26 @@ export default function Reservas() {
               setBusyId(null);
             }}
             onReject={setRejecting}
+            onReschedule={setRescheduling}
             onCancel={async (v) => {
-              if (!window.confirm('¿Cancelar esta reserva?')) return;
+              if (!window.confirm('Esta acción liberará el horario y notificará la cancelación. ¿Confirmar?'))
+                return;
               setBusyId(v.booking.id);
-              await act(() => cancel(v.booking.id), 'Reserva cancelada.');
+              await act(() => cancel(v.booking.id), 'Reserva eliminada.');
               setBusyId(null);
+            }}
+            onRemove={async (v) => {
+              if (!window.confirm('¿Eliminar definitivamente esta reserva? No se podrá recuperar.'))
+                return;
+              setBusyId(v.booking.id);
+              await act(() => remove(v.booking.id), 'Reserva eliminada definitivamente.');
+              setBusyId(null);
+            }}
+            onRetrySync={async (v) => {
+              setBusyId(v.booking.id);
+              await act(() => retryCalendarSync(v.booking), 'Sincronización reintentada.');
+              setBusyId(null);
+              reload();
             }}
           />
 
@@ -229,12 +250,25 @@ export default function Reservas() {
           setDetail(null);
           setRejecting(v);
         }}
+        onReschedule={(v) => {
+          setDetail(null);
+          setRescheduling(v);
+        }}
         onCancel={async (v) => {
-          if (!window.confirm('¿Cancelar esta reserva?')) return;
+          if (!window.confirm('Esta acción liberará el horario y notificará la cancelación. ¿Confirmar?'))
+            return;
           setBusyId(v.booking.id);
-          await act(() => cancel(v.booking.id), 'Reserva cancelada.');
+          await act(() => cancel(v.booking.id), 'Reserva eliminada.');
           setBusyId(null);
           setDetail(null);
+        }}
+      />
+      <RescheduleModal
+        view={rescheduling}
+        onClose={() => setRescheduling(null)}
+        onDone={() => {
+          show('Reserva reprogramada.');
+          reload();
         }}
       />
     </div>
